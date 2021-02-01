@@ -43,8 +43,7 @@ group_folders = [ entry.path for entry in os.scandir(DIR) if entry.name.startswi
 save = False
 
 
-
-def main(from_pickles=True):
+def generate(from_pickles=True):
 
     if from_pickles:
         group_names = ["group1A"] #, "group1B", "group2A", "grou2B"]
@@ -54,20 +53,22 @@ def main(from_pickles=True):
             print(f"\nTesting {group_name} arrangements:")
             check_the_results(arrangements, group_name)
 
-            # print(f"\nArrangements for {group_name}:\n")
+            print(f"\nArrangements for {group_name}:\n")
             pprint.pprint(arrangements)
 
     else:
         # group_names = ["group1A"] #, "group1B", "group2A", "grou2B"]
         for group_folder in group_folders:
-            arrangements =  extract_data(group_name)
+            arrangements =  extract_data(group_folder)
 
-            print(f"\nTesting {group_name} arrangements:")
             group_name = os.path.basename(group_folder)
-            check_the_results(arrangements, group_name)
+            print(f"\nTesting {group_name} arrangements:")
+            error = check_the_results(arrangements, group_name)
 
             # print(f"\nArrangements for {group_name}:\n")
             # pprint.pprint(arrangements)
+            if ((not error)and save):
+                save_to_pickle(arrangements, group_name)
 
 
 def load_pickle(group_name):
@@ -93,39 +94,40 @@ def extract_data(group_folder):
 
     video_dicts = list(map(create_video_dict, all_video_names_in_group))
 
-    assert len([d["cat"] for d in video_dicts if d["cat"]=="same"]) == 16, "Number of 'same' dicts should be 16!"
-    assert len([d["cat"] for d in video_dicts if d["cat"]=="diff"]) == 16, "Number of 'diff' dicts should be 16!"
+    assert len([d for d in video_dicts if d["cat"]=="same"]) == 16, "Number of 'same' dicts should be 16!"
+    assert len([d for d in video_dicts if d["cat"]=="diff"]) == 16, "Number of 'diff' dicts should be 16!"
 
     arrangements = select_and_label_video_dictionaries(video_dicts, all_video_names_in_group) # dicts with list of dicts as values
-
+    print("nr of arrangements>", len(arrangements))
     return arrangements
 
 
 def create_video_dict(video_name):
-    
+
     keys = ["name", "word", "cat", "objs",
                 "pointing", "pointed_LEFT", "pointed_RIGHT", "pointed_obj", "not_pointed_obj"]
-    
+
     d = dict.fromkeys(keys)
-    group, cat_, side, refs, word_ = video_name.lower().split("_")
-    cat, look = cat_.split(".")
-    word = word_.split(".")[0]
+    group, cat_look, side, refs, word_ext = video_name.lower().split("_")
+    cat, look = cat_look.split(".")
+    word = word_ext.split(".")[0]
 
     d["name"] = video_name
-    d["word"] = word # bow[-1].split(".")[0]
+    d["word"] = word
     d["cat"] = cat
-    d["objs"] = refs.split("-") #bow[-2].split("-")
-    d["pointing"] = side != "nop" # tag.split("_")[-1] != "nop"
+    d["objs"] = refs.split("-")
+    d["pointing"] = side != "nop"
+    # d["side"] = side
     if d["pointing"]:
         # CHANGING PERSPECTIVE: originally "right" pointing label will be "pointed_left"
-        d["pointed_LEFT"] = side=="right" # tag.endswith("right") # left means right from viewer's perspective
-        d["pointed_RIGHT"] = side=="left" #tag.endswith("left")
+        d["pointed_LEFT"] = side=="right"
+        d["pointed_RIGHT"] = side=="left"
         if d["cat"]=="same":
             d["pointed_obj"] = d["objs"][0]
         else:
             d["pointed_obj"] = d["objs"][0] if d["pointed_LEFT"] else d["objs"][1]
             d["not_pointed_obj"] = d["objs"][1] if d["pointed_LEFT"] else d["objs"][0]
-            
+
     return d
 
 
@@ -147,6 +149,7 @@ def select_and_label_video_dictionaries(video_dicts, all_video_names_in_group):
     """
     selections_dict = {}
     # 4 same non-pointing
+    # random choice of left, right, notarget
     same_nonpointing = [ vid for vid in video_dicts if (vid["cat"]=="same" and not vid["pointing"]) ]
     same_nonpointing = np.random.choice(same_nonpointing, 6, replace=False).tolist()
     selections_dict["same_nonpoint_left"] = same_nonpointing[:2]
@@ -191,46 +194,47 @@ def select_and_label_video_dictionaries(video_dicts, all_video_names_in_group):
     assert sum(map(len, selections_dict.values())) == 28, "Nr of combinations should be 28!"
     assert len(selections_dict.keys()) == 14, "Nr of labels should be 14!"
 
-    return create_final_test_arrangements(selections_dict, all_video_names_in_group)
+    arrangements = create_final_test_arrangements(selections_dict, all_video_names_in_group)
+    return arrangements
 
 
 def create_final_test_arrangements(selections_dict, all_video_names_in_group):
     """
-    For each case in each group, create a dict:
-        {label: label, word: name, target: ref, target_place: place,
-             other1: ref, other1_place: place, other2: ref, other2_place: place]} or
-        {label: label, word: name, other1: ref, other1_place: place,
-             other2: ref, other2_place: place, other3: ref, other3_place: place]}
-    where
-        - label is df["label"] which is the original video arrangement for the word
-        - name is the word
-        - ref is object reference number
-        - place is 0 (left), 1 (right) or 2 (middle)
+    arguments:
+        selections_dict : a dictionary of form label:selected list of video dictionaries
+        all_video_names_in_group: the video titles in the group
 
-    label code:
+    For each case in each group, create a dict:
+        {label: label, word: word, target: ref,
+             target_place: place,
+             other1: ref, other1_place: place, other2: ref, other2_place: place]} or
+        {label: label, word: word,
+             other1: ref, other1_place: place,
+             other2: ref, other2_place: place, other3: ref, other3_place: place]}
+
+         where
+            - label is one of the keys of the selections dictionary
+            - ref is object reference number
+            - place is 0 (left), 1 (right) or 2 (middle)
+
+    labels:
+        same_pointed_left, same_pointed_right, same_nonpoint_left, same_nonpoint_right,
+        same_nonpoint_notarget, same_pointing_notarget,
+        diff_pointed_left, diff_pointed_right, diff_nonpoint_left, diff_nonpoint_right,
+        diff_unpointed_left, diff_unpointed_right,
+        diff_nonpoint_notarget, diff_pointing_notarget
+
+    label meanings:
         x_pointed_side => target is pointed obj from 'side'
         x_unpointed_side => target is unpointed obj from 'side'
         x_nonpoint_side => target is obj from 'side' (any side if x=same)
         x_pointing_notarget => all 3 objects are from 'other_obj'
         x_nonpoint_notarget => all 3 objects are from 'other_obj'
 
-    ISSUES:
-        - SIDE a tesztben a tárgyak 1:3 arányban legyenek ugyanazon az oldalon, ahol voltak a videókban
-        -> there are 12 diff vids with fixed target -> 4 of them should be on the same side?
-        -> there are 4 pointing same vids -> 2 of the should be on the same side?
-
-    keys:
-            same_pointed_left, same_pointed_right, same_nonpoint_left, same_nonpoint_right,
-            same_nonpoint_notarget, same_pointing_notarget,
-            diff_pointed_left, diff_pointed_right, diff_nonpoint_left, diff_nonpoint_right,
-            diff_unpointed_left, diff_unpointed_right,
-            diff_nonpoint_notarget, diff_pointing_notarget
-
-    places: 0 : left, 1 : middle, 2 : right
-
     object availability:
         there are 48 objects in the group
         we need 8*3 + 12*3 + 8*3 = 84
+        -> some will be repeated
     """
     all_obj_refs = get_all_objects(all_video_names_in_group)
     available_refs = all_obj_refs
@@ -256,24 +260,26 @@ def create_final_test_arrangements(selections_dict, all_video_names_in_group):
                arrangements.append(arr)
 
     assert len(arrangements) == 28, f"There should be 28 arrangements, not {len(arrangements)}!"
-    
+
     arrangements = populate_with_other_objects(arrangements, available_refs, all_obj_refs)
     # arrangements = [ populate_with_other_objects(arr, available_refs, all_obj_refs) for arr in arrangements ]
     ###### can this be done in a functional way? List compr or map? The extra args...
-   
-    
+
+    return arrangements
+
+
 
 def populate_with_other_objects(arrangements, available_refs, all_obj_refs):
     """ populate the not target objects (= others) """
-    
+
     for arr in arrangements:
         # available_refs will run out at some point, need refill
         if len(available_refs) < 2:
             available_refs = all_obj_refs
             print("\n**refill**\n")
-        
+
         n = 3 if arr["label"].endswith("notarget") else 2
-        others = np.random.choice([ ref for ref in available_refs if ref != arr.get("target") ], 
+        others = np.random.choice([ ref for ref in available_refs if ref != arr.get("target") ],
                                   n, replace=False).tolist()
         arr["other1"] = others[0]
         arr["other2"] = others[1]
@@ -281,7 +287,7 @@ def populate_with_other_objects(arrangements, available_refs, all_obj_refs):
             arr["other3"] = others[2]
         available_refs = [ ref for ref in available_refs if ref not in others ]
 
-    return arrangements, available_refs
+    return arrangements
 
 
 def get_all_objects(vid_names):
@@ -291,11 +297,14 @@ def get_all_objects(vid_names):
         objs = vid.split("_")[-2].split("-") # list
         all_objects += objs
 
+    return all_objects
+
 
 def arrange_to_dict(label, video_dict, fix, available_refs):
     """ Should create the target and the places,
         so that the other objects can be picked from the available pool afterwards
-        TO TEST"""
+        TO TEST:
+            what if the label doesn't match the video_dict?"""
 
     cat, point, side = label.split("_")
 
@@ -342,7 +351,7 @@ def find_others(arr, available_refs):
 
 
 def save_to_pickle(arrangements, group_name):
-    
+
     arrangements_pickle = os.path.join(DIR, f"{group_name}_arrangements.pickle")
     with open (arrangements_pickle, "wb") as handle:
         pickle.dump(arrangements, handle, protocol=pickle.HIGHEST_PROTOCOL)
@@ -354,7 +363,8 @@ def check_the_results(list_of_dict, group_name):
     Checki if the list of dictionaries on the pickle is valid:
         - no doubles within a dict
         - each obj ref is repeated max once (2 occurences)
-        - each word occures only once
+        - each word occurs only once
+        - sides are good
 
     """
     # 1. no doubles within a dict
@@ -386,17 +396,27 @@ def check_the_results(list_of_dict, group_name):
                 elif obj in [d.get("other1"), d.get("other2"), d.get("other3")]:
                     print(f"\t-> {obj} is one of the others in one of the {d['label']}")
 
+    # 3. each word occurs only once
+    nr_of_individual_words = len(list(map(lambda x:x["word"], list_of_dict)))
+    if nr_of_individual_words != len(list_of_dict):
+        error = True
+        print(f"\t-> nr of individual words ({nr_of_individual_words}) is not equal to the nr of arrangements (28)")
+    else:
+        print(f"\tNumber of individual words in the arrangement: {nr_of_individual_words}")
+
+    # 4. sides are as exected
+
+
     if error:
         print("!! There is an ERROR in this group!")
     else:
-        print("--> There is NO error found in this group.")
-        if save:
-            save_to_pickle(list_of_dict, group_name)
+        print("--> NO ERRORS found in this group.")
+
+    return error
 
 
 if __name__ == "__main__":
-    main(from_pickles=True)
-
+    generate(from_pickles=True)
 
 
 

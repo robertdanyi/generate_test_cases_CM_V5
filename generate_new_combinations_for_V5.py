@@ -131,6 +131,28 @@ def create_video_dict(video_name):
     return d
 
 
+def select_videos(video_dicts, category, pointing, side, n):
+    
+    if pointing == "nonpointing":
+    
+        lst = [ vid for vid in video_dicts if (vid["cat"]==category and not vid["pointing"])]
+        lst = np.random.choice(lst, n, replace=False).tolist()
+        return lst
+        
+    elif pointing == "pointing":
+        
+        point_cond = "pointed_{0}".format(side.upper())
+        
+        lst = [ vid for vid in video_dicts if (vid["cat"]==category and not vid["pointing"]) ]
+        lst = [ vid for vid in lst if vid[point_cond] ]
+        lst = np.random.choice(lst, n, replace=False).tolist()
+        return lst
+    
+    ### also check if notargets are properly filtered for other objects: original objects from video for word are excluded
+            
+    
+
+
 def select_and_label_video_dictionaries(video_dicts, all_video_names_in_group):
     """
     Random select x from the video dictionaries for each required test label:

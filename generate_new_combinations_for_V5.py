@@ -102,7 +102,7 @@ def extract_data(group_folder):
     return arrangements
 
 
-def create_video_dict(video_name):
+def create_video_dict(video_name: str) -> dict:
 
     keys = ["name", "word", "cat", "objs",
                 "pointing", "pointed_LEFT", "pointed_RIGHT", "pointed_obj", "not_pointed_obj"]
@@ -131,29 +131,35 @@ def create_video_dict(video_name):
     return d
 
 
-def select_videos(video_dicts, category, pointing, side, n):
+def select_videos(video_dicts: list, category: str, pointing: str, side: str, n: int) -> list:
+    """ 
+    select n videos (dicts) 
+    according to the given category (same/diff), 
+    pointing (pointing/nonpoint/unpoint) and
+    side (left/right)
+    """
     
     if pointing == "nonpointing":
     
-        lst = [ vid for vid in video_dicts if (vid["cat"]==category and not vid["pointing"])]
-        lst = np.random.choice(lst, n, replace=False).tolist()
-        return lst
+        lst_of_selected_vids = [ vid for vid in video_dicts if (vid["cat"]==category and not vid["pointing"])]
+        lst_of_selected_vids = np.random.choice(lst_of_selected_vids, n, replace=False).tolist()
+        return lst_of_selected_vids
         
     elif pointing == "pointing":
         
         point_cond = "pointed_{0}".format(side.upper())
         
-        lst = [ vid for vid in video_dicts if (vid["cat"]==category and not vid["pointing"]) ]
-        lst = [ vid for vid in lst if vid[point_cond] ]
-        lst = np.random.choice(lst, n, replace=False).tolist()
-        return lst
+        lst_of_selected_vids = [ vid for vid in video_dicts if (vid["cat"]==category and not vid["pointing"]) ]
+        lst_of_selected_vids = [ vid for vid in lst_of_selected_vids if vid[point_cond] ]
+        lst_of_selected_vids = np.random.choice(lst_of_selected_vids, n, replace=False).tolist()
+        return lst_of_selected_vids
     
     ### also check if notargets are properly filtered for other objects: original objects from video for word are excluded
             
     
 
 
-def select_and_label_video_dictionaries(video_dicts, all_video_names_in_group):
+def select_and_label_video_dictionaries(video_dicts: list , all_video_names_in_group: list) -> list:
     """
     Random select x from the video dictionaries for each required test label:
         - 8 same from 16 same
@@ -220,11 +226,14 @@ def select_and_label_video_dictionaries(video_dicts, all_video_names_in_group):
     return arrangements
 
 
-def create_final_test_arrangements(selections_dict, all_video_names_in_group):
+def create_final_test_arrangements(selections_dict: dict, all_video_names_in_group: list) -> list:
     """
     arguments:
         selections_dict : a dictionary of form label:selected list of video dictionaries
         all_video_names_in_group: the video titles in the group
+        
+    returns:
+        list of dicts
 
     For each case in each group, create a dict:
         {label: label, word: word, target: ref,
@@ -260,28 +269,53 @@ def create_final_test_arrangements(selections_dict, all_video_names_in_group):
     """
     all_obj_refs = get_all_objects(all_video_names_in_group)
     available_refs = all_obj_refs
+    targets = [] # collect target objects to exclude them from available refs
     arrangements = []
     for label, selection in selections_dict.items(): # each value is a list of dicts
 
-        cat, point, side = label.split("_")
+        # cat, point, side = label.split("_")
+        side = label.split("_")[-1]
+        # if not label.endswith("notarget"):
         if side != "notarget":
             fix = True
             for video_dict in selection: # 2 dicts in each selection
-                arr, available_refs = arrange_to_dict(label, video_dict, fix, available_refs)
+                # init arrangement dictionary
+                arr = {"label": label, "word": video_dict["word"].upper()}
+                
+                # arr = arrange_to_dict(label, video_dict, fix)
+                
+                # add target
+                arr["target"] =  get_target_obj_value(label, video_dict)
+                targets.append(arr["target"])
+                # exclude target obj from the pool of available objects
+                # available_refs = [ ref for ref in available_refs if ref != arr["target"] ]
+                # get object placement values
+                arr["target_place"], arr["other1_place"], arr["other2_place"] = get_place_values(side, fix)
                 fix=False
+                
+                # propagate the originally used objects to exclude at 'populate_with_other_objects'
+                arr["original_objs"] = video_dict["objs"]
+                
                 arrangements.append(arr)
 
         # NOTARGET
         else:
             for video_dict in selection:
-               arr = {"label": label, "word": video_dict["word"].upper()}
-               places = [0,1,2]
-               arr["other1_place"] = places.pop(np.random.choice([0,1,2]))
-               arr["other2_place"] = places.pop(np.random.choice([0,1]))
-               arr["other3_place"] = places[0]
-               arrangements.append(arr)
+                arr = {"label": label, "word": video_dict["word"].upper()}
+                
+                # arr = arrange_to_dict(label, video_dict, fix=False)
+                
+                # get object placement values
+                arr["other1_place"], arr["other1_place"], arr["other2_place"] = get_place_values(side, fix)
+                
+                # propagate the originally used objects to exclude at 'populate_with_other_objects'
+                arr["original_objs"] = video_dict["objs"]
+                
+                arrangements.append(arr)
 
     assert len(arrangements) == 28, f"There should be 28 arrangements, not {len(arrangements)}!"
+    
+    available_refs = [ ref for ref in available_refs if ref not in targets ]
 
     arrangements = populate_with_other_objects(arrangements, available_refs, all_obj_refs)
     # arrangements = [ populate_with_other_objects(arr, available_refs, all_obj_refs) for arr in arrangements ]
@@ -292,7 +326,11 @@ def create_final_test_arrangements(selections_dict, all_video_names_in_group):
 
 
 def populate_with_other_objects(arrangements, available_refs, all_obj_refs):
-    """ populate the not target objects (= others) """
+    """ populate the not target objects (= others)
+        from the pool of available objects, from which excluded are:
+        - the objects used with the word
+        - the other targets (until refill)
+    """
 
     for arr in arrangements:
         # available_refs will run out at some point, need refill
@@ -301,12 +339,14 @@ def populate_with_other_objects(arrangements, available_refs, all_obj_refs):
             print("\n**refill**\n")
 
         n = 3 if arr["label"].endswith("notarget") else 2
-        others = np.random.choice([ ref for ref in available_refs if ref != arr.get("target") ],
+        others = np.random.choice([ ref for ref in available_refs if ref not in arr["original_objs"] ],
                                   n, replace=False).tolist()
         arr["other1"] = others[0]
         arr["other2"] = others[1]
         if n == 3:
             arr["other3"] = others[2]
+            
+        # exclude the chosen 'other' objects from the pool to make sure they are not picked again
         available_refs = [ ref for ref in available_refs if ref not in others ]
 
     return arrangements
@@ -322,11 +362,58 @@ def get_all_objects(vid_names):
     return all_objects
 
 
-def arrange_to_dict(label, video_dict, fix, available_refs):
+def get_target_obj_value(label: str, video_dict: dict) -> dict:
+    """ Determine target obj ref for arrangement """
+    cat, point, side = label.split("_")
+
+    # arr = {"label": label, "word": video_dict["word"].upper(), "fix":fix}
+
+    if point=="pointed":
+        target = video_dict["pointed_obj"]
+    elif point=="unpointed": # only diff
+        target = video_dict["not_pointed_obj"]
+    elif point=="nonpoint":
+        if cat=="same":
+            target = video_dict["objs"][0]
+        else:
+            target = video_dict["objs"][0] if side=="left" else video_dict["objs"][1]
+            
+    return target
+
+
+def get_place_values(label, fix):
+    """ Determine object placement values """
+    
+    cat, point, side = label.split("_")
+    
+    if side == "notarget":
+        places = [0,1,2]
+        other1_place = places.pop(np.random.choice([0,1,2]))
+        other2_place = places.pop(np.random.choice([0,1]))
+        other3_place = places[0]
+        
+        return (other1_place, other2_place, other3_place)
+    
+    if fix:
+        target_place = 0 if side=="left" else 2
+        places = [1,2] if side=="left" else [0,1]
+    else:
+        places = [0,1,2]
+        nofix_places = [1,2] if side=="left" else [0,1]
+        target_place = places.pop(np.random.choice(nofix_places)) # other than right
+    other1_place = places.pop(np.random.choice([0,1]))
+    other2_place = places[0]
+    
+    return (target_place, other1_place, other2_place)
+    
+
+
+def arrange_to_dict(label: str, video_dict: dict, fix: bool) -> dict:
     """ Should create the target and the places,
         so that the other objects can be picked from the available pool afterwards
         TO TEST:
-            what if the label doesn't match the video_dict?"""
+            what if the label doesn't match the video_dict?
+    """
 
     cat, point, side = label.split("_")
 
@@ -342,13 +429,10 @@ def arrange_to_dict(label, video_dict, fix, available_refs):
         else:
             arr["target"] = video_dict["objs"][0] if side=="left" else video_dict["objs"][1]
 
-    # remove the target obj from the pool of available objects
-    available_refs = [ ref for ref in available_refs if ref != arr["target"] ]
-
     if fix:
         arr["target_place"] = 0 if side=="left" else 2
         places = [1,2] if side=="left" else [0,1]
-        fix = False
+        # fix = False
     else:
         places = [0,1,2]
         nofix_places = [1,2] if side=="left" else [0,1]
@@ -356,7 +440,7 @@ def arrange_to_dict(label, video_dict, fix, available_refs):
     arr["other1_place"] = places.pop(np.random.choice([0,1]))
     arr["other2_place"] = places[0]
 
-    return arr, available_refs
+    return arr
 
 
 def find_others(arr, available_refs):

@@ -314,12 +314,14 @@ def populate_with_other_objects(arrangements, available_refs, all_obj_refs):
 
         print("\tSize of available pool:", len(available_refs))
         # available_refs will run out at some point, need refill
-        if len(available_refs) < n:
+        pool = [ ref for ref in available_refs if ref not in arr["original_objs"] ]
+        if len(pool) < n:
             available_refs = all_obj_refs
             print("\t available_refs pool refilled\n")
+            pool = [ ref for ref in available_refs if ref not in arr["original_objs"] ]
 
-        others = np.random.choice([ ref for ref in available_refs if ref not in arr["original_objs"] ],
-                                  n, replace=False).tolist()
+        others = np.random.choice(pool, n, replace=False).tolist()
+        
         for i in range(n):
             arr[f"other{i+1}"] = others[i]
 

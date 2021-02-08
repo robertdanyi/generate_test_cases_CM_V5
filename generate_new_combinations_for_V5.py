@@ -40,7 +40,8 @@ from collections import Counter
 
 DIR = os.path.dirname(os.path.abspath(__file__))
 group_folders = [ entry.path for entry in os.scandir(DIR) if entry.name.startswith("group") and entry.is_dir() ]
-save = True
+all_video_names = {}
+save = False
 
 
 def generate(from_pickles=True):
@@ -94,6 +95,9 @@ def extract_data(group_folder):
     assert len(all_video_names_in_group) == 32, "Something's wrong, there should be 32 video names"
     # pprint.pprint(all_vid_names_in_group)
 
+    group_name = os.path.basename(group_folder)
+    all_video_names[group_name] = all_video_names_in_group
+
     video_dicts = list(map(create_video_dict, all_video_names_in_group))
 
     assert len([d for d in video_dicts if d["cat"]=="same"]) == 16, "Number of 'same' dicts should be 16!"
@@ -139,21 +143,22 @@ def select_and_label_video_dictionaries(video_dicts: list , all_video_names_in_g
             - 4 pointing - done
             - 4 non pointing - done
         - 12 diff from 16 diff
-            - 8 point (from 8) - done -- 6 POINTING!
+            - 8 point (from 8) - done
             - 4 non-point (from 8 - 2 obj from left, 2 from right) - done
         - 4 same from 8 same (notarget)
             - 2 point
             - 2 nonpoint
         - 4 diff from 4 diff (notarget)
-            - 2 point (here it's interesting - already had 8 point above)
-            - 2 nonpoint
+            - 4 nonpoint (no more pointing in group)
+
+    There will be 28 selections altogether, with 13 labels.
     """
     labels = ["same_pointed_left", "same_pointed_right", "same_nonpoint_left", "same_nonpoint_right",
         "diff_pointed_left", "diff_pointed_right", "diff_nonpoint_left", "diff_nonpoint_right"]
 
     selections_by_label = {}
     for label in labels:
-        n = 4 if (label.startswith("diff_pointed"))  else 3
+        n = 4 if (label.startswith("diff"))  else 3
         selections_by_label[label], video_dicts = select_videos(label, video_dicts, n)
 
     selections_by_test_category = {} # 14 keys, 26 values
@@ -168,18 +173,18 @@ def select_and_label_video_dictionaries(video_dicts: list , all_video_names_in_g
 
     selections_by_test_category["diff_nonpoint_left"] = selections_by_label["diff_nonpoint_left"][:2]
     selections_by_test_category["diff_nonpoint_right"] = selections_by_label["diff_nonpoint_right"][:2]
-    selections_by_test_category["diff_nonpoint_notarget"] = (selections_by_label["diff_nonpoint_left"][2:3] +
-                                                 selections_by_label["diff_nonpoint_right"][2:3])
+    selections_by_test_category["diff_nonpoint_notarget"] = (selections_by_label["diff_nonpoint_left"][2:4] +
+                                                 selections_by_label["diff_nonpoint_right"][2:4])
 
     selections_by_test_category["diff_pointed_left"] = selections_by_label["diff_pointed_left"][:2]
     selections_by_test_category["diff_pointed_right"] = selections_by_label["diff_pointed_right"][:2]
-    selections_by_test_category["diff_unpointed_right"] = selections_by_label["diff_pointed_left"][2:3]
-    selections_by_test_category["diff_unpointed_left"] = selections_by_label["diff_pointed_right"][2:3]
-    selections_by_test_category["diff_pointing_notarget"] = (selections_by_label["diff_pointed_left"][3:4] +
-                                                 selections_by_label["diff_pointed_right"][3:4])
+    selections_by_test_category["diff_unpointed_right"] = selections_by_label["diff_pointed_left"][2:4]
+    selections_by_test_category["diff_unpointed_left"] = selections_by_label["diff_pointed_right"][2:4]
+    # selections_by_test_category["diff_pointing_notarget"] = (selections_by_label["diff_pointed_left"][3:4] +
+                                                 # selections_by_label["diff_pointed_right"][3:4])
 
-    assert sum(map(len, selections_by_test_category.values())) == 26, "Nr of combinations should be 26!"
-    assert len(selections_by_test_category.keys()) == 14, "Nr of labels should be 14!"
+    assert sum(map(len, selections_by_test_category.values())) == 28, "Nr of combinations should be 28!"
+    assert len(selections_by_test_category.keys()) == 13, "Nr of labels should be 13!"
 
     arrangements = create_final_test_arrangements(selections_by_test_category, all_video_names_in_group)
     return arrangements
@@ -196,7 +201,7 @@ def select_videos(label: str, video_dicts: list, n: int) -> list:
     category, pointing, side = label.split("_")
 
     if pointing == "nonpoint":
-        # side doesn't play a role in chosing the video, it is only labelled for placement
+        # for 'same', side doesn't play a role in chosing the video, it is only labelled for placement
         lst_of_selected_vids = [ vid for vid in video_dicts if (vid["cat"]==category and vid["pointing"]==False)]
         lst_of_selected_vids = np.random.choice(lst_of_selected_vids, n, replace=False).tolist()
         video_dicts = [ vid for vid in video_dicts if vid not in lst_of_selected_vids ]
@@ -222,7 +227,7 @@ def create_final_test_arrangements(selections_by_test_category: dict, all_video_
     returns:
         list of dicts
 
-    For each case in each group, create a dict:
+    For each test case, create a dict (= arrangement):
         {label: label, word: word, target: ref,
              target_place: place,
              other1: ref, other1_place: place, other2: ref, other2_place: place]} or
@@ -262,17 +267,17 @@ def create_final_test_arrangements(selections_by_test_category: dict, all_video_
 
         side = label.split("_")[-1]
         if side != "notarget":
-            fix = True
+            # fix = True
             for video_dict in selection: # 2 dicts in each selection; except 'unpoint'
                 # init arrangement dictionary
-                arr = dict(label=label, word=video_dict["word"].upper(), side=side, fix=fix,
+                arr = dict(label=label, word=video_dict["word"].upper(), side=side, # fix=fix,
                            original_objs=video_dict["objs"], # propagate the originally used objects to exclude from 'others'
                            target=get_target_obj_value(label, video_dict) # add target
                            )
                 targets.append(arr["target"])
                 arrangements.append(arr)
                 # switch to not fixed
-                fix=False
+                # fix=False
 
         # NOTARGET
         else:
@@ -288,7 +293,10 @@ def create_final_test_arrangements(selections_by_test_category: dict, all_video_
     available_refs = [ ref for ref in available_refs if ref not in targets ]
     final_arrangements = populate_with_other_objects(arrangements, available_refs, all_obj_refs)
 
-    assert len(arrangements) == 26, f"There should be 26 arrangements, not {len(arrangements)}!"
+    assert len(arrangements) == 28, f"There should be 28 arrangements, not {len(arrangements)}!"
+
+    # compare selections with arrangements wrt side constraints
+    # test_side_constraints(selections_by_test_category, arrangements)
 
     return final_arrangements
 
@@ -304,6 +312,7 @@ def populate_with_other_objects(arrangements, available_refs, all_obj_refs):
     for arr in arrangements:
         n = 3 if arr["label"].endswith("notarget") else 2
 
+        print("\tSize of available pool:", len(available_refs))
         # available_refs will run out at some point, need refill
         if len(available_refs) < n:
             available_refs = all_obj_refs
@@ -340,7 +349,7 @@ def get_target_obj_value(label: str, video_dict: dict) -> dict:
         target = video_dict["not_pointed_obj"]
     elif point=="nonpoint":
         if cat=="same":
-            target = video_dict["objs"][0]
+            target = video_dict["objs"][0] # side don't matter
         else:
             target = video_dict["objs"][0] if side=="left" else video_dict["objs"][1]
 
@@ -351,25 +360,36 @@ def get_place_values(arr):
     """ Determine object placement values """
 
     side = arr["side"]
+    places = [0,1,2]
+    arr["other1_place"] = places.pop(np.random.choice([0,1,2]))
+    arr["other2_place"] = places.pop(np.random.choice([0,1]))
     if side == "notarget":
-        places = [0,1,2]
-        arr["other1_place"] = places.pop(np.random.choice([0,1,2]))
-        arr["other2_place"] = places.pop(np.random.choice([0,1]))
         arr["other3_place"] = places[0]
-
-        return arr
-
-    if arr["fix"]:
-        arr["target_place"] = 0 if side=="left" else 2
-        places = [1,2] if side=="left" else [0,1]
     else:
-        places = [0,1,2]
-        nofix_places = [1,2] if side=="left" else [0,1]
-        arr["target_place"] = places.pop(np.random.choice(nofix_places)) # other than right
-    arr["other1_place"] = places.pop(np.random.choice([0,1]))
-    arr["other2_place"] = places[0]
+        arr["target_place"] = places[0]
 
     return arr
+
+
+    # if side == "notarget":
+    #     places = [0,1,2]
+    #     arr["other1_place"] = places.pop(np.random.choice([0,1,2]))
+    #     arr["other2_place"] = places.pop(np.random.choice([0,1]))
+    #     arr["other3_place"] = places[0]
+
+    #     return arr
+
+    # if arr["fix"]:
+    #     arr["target_place"] = 0 if side=="left" else 2
+    #     places = [1,2] if side=="left" else [0,1]
+    # else:
+    #     places = [0,1,2]
+    #     nofix_places = [1,2] if side=="left" else [0,1]
+    #     arr["target_place"] = places.pop(np.random.choice(nofix_places)) # other than right
+    # arr["other1_place"] = places.pop(np.random.choice([0,1]))
+    # arr["other2_place"] = places[0]
+
+    # return arr
 
 
 def save_to_pickle(arrangements, group_name):
@@ -426,8 +446,6 @@ def check_the_results(list_of_dict, group_name):
     else:
         print(f"\tNumber of individual words in the arrangement: {nr_of_individual_words}")
 
-    # 4. sides are as expected
-
 
     if error:
         print("!! There is an ERROR in this group!")
@@ -435,6 +453,30 @@ def check_the_results(list_of_dict, group_name):
         print("--> NO ERRORS found in this group.")
 
     return error
+
+
+def test_side_constraints(selections_by_test_category, arrangements):
+    """
+    to check:
+        - target object side vs original object side (pointing and unpointing)
+            - pointing: same side, opposite side
+            - unpointing: same side, opposite side
+        - there is no object from original video in nontarget arrangements
+    """
+    for label in list(selections_by_test_category.keys()):
+        video_dicts_for_label = selections_by_test_category[label]
+        for video_dict in video_dicts_for_label:
+            word = video_dict["word"]
+            arr = [ arr for arr in arrangements if arr["word"]==word ][0]
+
+            side = video_dict["name"].lower().split("_")[2]
+            side = 0 if side=="right" else 2 # taking into account the perspective change
+            cat, point, side = arr["label"].split("_")
+            if arr["label"].startswith("diff_pointed"):
+                if arr["fix"]:
+                    assert arr.get("target_place") == video_dict[""]
+
+
 
 
 if __name__ == "__main__":
